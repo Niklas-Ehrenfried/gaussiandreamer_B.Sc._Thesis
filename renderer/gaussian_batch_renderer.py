@@ -16,6 +16,16 @@ class GaussianBatchRenderer:
         pred_normals = []
         depths = []
         masks = []
+
+        ref_masks = []
+        ref_depths = []
+        ref_normals = []
+        ref_renders = []
+        ref_viewspace_points = []
+        ref_visibility_filter = []
+        ref_radii = []
+        ref_pred_normals = []
+        
         for batch_idx in range(bs):
             batch["batch_idx"] = batch_idx
             fovy = batch["fovy"][batch_idx]
@@ -54,6 +64,27 @@ class GaussianBatchRenderer:
                 if render_pkg.__contains__("mask"):
                     masks.append(render_pkg["mask"])
 
+                if render_pkg.__contains__("ref_render"):
+                    ref_renders.append(render_pkg["ref_render"])
+                if render_pkg.__contains__("ref_viewspace_points"):
+                    ref_viewspace_points.append(render_pkg["ref_viewspace_points"])
+                if render_pkg.__contains__("ref_visibility_filter"):
+                    ref_visibility_filter.append(render_pkg["ref_visibility_filter"])
+                if render_pkg.__contains__("ref_radii"):
+                    ref_radii.append(render_pkg["ref_radii"])
+
+                if render_pkg.__contains__("ref_normal"):
+                    ref_normals.append(render_pkg["ref_normal"])        
+                if (
+                    render_pkg.__contains__("ref_pred_normal")
+                    and render_pkg["ref_pred_normal"] is not None
+                ):
+                    pred_normals.append(render_pkg["ref_pred_normal"])
+                if render_pkg.__contains__("ref_depth"):
+                    ref_depths.append(render_pkg["ref_depth"])
+                if render_pkg.__contains__("ref_mask"):
+                    ref_masks.append(render_pkg["ref_mask"])
+
         outputs = {
             "comp_rgb": torch.stack(renders, dim=0).permute(0, 2, 3, 1),
             "viewspace_points": viewspace_points,
@@ -84,6 +115,41 @@ class GaussianBatchRenderer:
             outputs.update(
                 {
                     "comp_mask": torch.stack(masks, dim=0).permute(0, 2, 3, 1),
+                }
+            )
+
+        # Add the reference renders to outputs
+        if len(ref_renders) > 0:
+            outputs.update(
+                {
+                    "ref_rgb": torch.stack(ref_renders, dim=0).permute(0, 2, 3, 1),
+                    "ref_viewspace_points": ref_viewspace_points,
+                    "ref_visibility_filter": ref_visibility_filter,
+                    "ref_radii": ref_radii,
+                }
+            )
+        if len(ref_normals) > 0:
+            outputs.update(
+                {
+                    "ref_normal": torch.stack(ref_normals, dim=0).permute(0, 2, 3, 1),
+                }
+            )
+        if len(ref_pred_normals) > 0:
+            outputs.update(
+                {
+                    "ref_pred_normal": torch.stack(ref_pred_normals, dim=0).permute(0, 2, 3, 1),
+                }
+            )
+        if len(ref_depths) > 0:
+            outputs.update(
+                {
+                    "ref_depth": torch.stack(ref_depths, dim=0).permute(0, 2, 3, 1),
+                }
+            )
+        if len(ref_masks) > 0:
+            outputs.update(
+                {
+                    "ref_mask": torch.stack(ref_masks, dim=0).permute(0, 2, 3, 1),
                 }
             )
         return outputs

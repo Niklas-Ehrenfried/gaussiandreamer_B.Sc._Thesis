@@ -64,6 +64,7 @@ class DiffGaussian(Rasterizer, GaussianBatchRenderer):
         geometry: BaseGeometry,
         material: BaseMaterial,
         background: BaseBackground,
+        ref_geometry: Optional[BaseGeometry] = None,
     ) -> None:
         threestudio.info(
             "[Note] Gaussian Splatting doesn't support material and background now."
@@ -73,7 +74,12 @@ class DiffGaussian(Rasterizer, GaussianBatchRenderer):
             self.cfg.back_ground_color, dtype=torch.float32, device="cuda"
         )
         self.normal_module = Depth2Normal()
-
+        self.ref_geometry = ref_geometry
+        threestudio.info(f"Reference geometry id in config :  {id(self.ref_geometry)}")
+        threestudio.info(f" geometry id in config :  {id(self.geometry)}")
+        self.original_geometry = self.geometry
+    
+    #Wrapper for reference switching
     def forward(
         self,
         viewpoint_camera,
@@ -84,12 +90,73 @@ class DiffGaussian(Rasterizer, GaussianBatchRenderer):
     ) -> Dict[str, Any]:
         """
         Render the scene.
+        Background tensor (bg_color) must be on GPU!
+
+        This function is a wrapper around the forwardRender function.
+        It sets the geometry to the reference model, calls forwardRender, and then restores the original geometry.
+        This allows for rendering the reference model with the same camera perspective as the original model.
+        """
+        out = self.forwardRender(
+            viewpoint_camera,
+            bg_color,
+            scaling_modifier=scaling_modifier,
+            override_color=override_color,
+            **kwargs    
+        )
+        if self.ref_geometry is not None:
+            # self.geometry = self.ref_geometry
+            ref = self.forwardRender(
+                viewpoint_camera,
+                bg_color,
+                scaling_modifier=scaling_modifier,
+                override_color=override_color,
+                geometry_switch=True,
+                **kwargs    
+            )
+
+            # self.geometry = self.original_geometry
+
+            return {
+                "render": out["render"].clamp(0, 1),
+                "normal": out["normal"],
+                "pred_normal": out["pred_normal"],
+                "mask": out["mask"],
+                "depth": out["depth"],
+                "viewspace_points": out["viewspace_points"],
+                "visibility_filter": out["visibility_filter"],
+                "radii": out["radii"],
+                "ref_render": ref["render"].clamp(0, 1),
+                "ref_normal": ref["normal"],
+                "ref_pred_normal": ref["pred_normal"],
+                "ref_mask": ref["mask"],
+                "ref_depth": ref["depth"],
+                "ref_viewspace_points": ref["viewspace_points"],
+                "ref_visibility_filter": ref["visibility_filter"],
+                "ref_radii": ref["radii"],
+            }
+        else:
+            threestudio.info("Reference geometry not set, returning only the rendered output without reference.")
+            return out
+
+
+    def forwardRender(
+        self,
+        viewpoint_camera,
+        bg_color: torch.Tensor,
+        scaling_modifier=1.0,
+        override_color=None,
+        geometry_switch=False,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        Render the scene.
 
         Background tensor (bg_color) must be on GPU!
         """
         bg_color = bg_color * 0
 
-        pc = self.geometry
+        pc = self.geometry if not geometry_switch else self.ref_geometry
+
         # Create zero tensor. We will use it to make pytorch return gradients of the 2D (screen-space) means
         screenspace_points = (
             torch.zeros_like(

@@ -102,6 +102,20 @@ system:
 
     lambda_chamfer: 0.0
 
+    lambda_alpha_silhouette_loss: 0.0
+    lambda_depth_silhouette_loss: 0.0
+
+    lambda_masked_sds: 0.0
+    lambda_alpha_masked_sds: 0.7
+    lambda_depth_masked_sds: 0.3
+
+    lambda_mask_penetration: 0.0
+
+    mask_fill_method: "distance"
+
+    mask_distance_max_radius: 24 #for distance-based mask consistency
+    distance_sigma: 8.0
+
 trainer:
   max_steps: 3000
   log_every_n_steps: 1

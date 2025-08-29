@@ -5,6 +5,7 @@ import numpy as np
 import threestudio
 import torch
 import copy
+import torch.nn.utils as nn_utils
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.systems.utils import parse_optimizer, parse_scheduler
 from threestudio.utils.loss import tv_loss
@@ -19,6 +20,15 @@ class MVDreamSystem(BaseLift3DSystem):
     class Config(BaseLift3DSystem.Config):
         lambda_chamfer: float = 0.0
         lambda_scale_outlier: float = 0.0
+        lambda_alpha_silhouette_loss: float = 0.0
+        lambda_depth_silhouette_loss: float = 0.0
+        lambda_masked_sds: float = 0.0
+        lambda_alpha_masked_sds: float = 0.0
+        lambda_depth_masked_sds: float = 0.0
+        mask_fill_method: str = "distance"
+        mask_distance_max_radius: int = 24
+        distance_sigma: float = 8.0
+        lambda_mask_penetration: float = 0.0
         visualize_samples: bool = False
 
     cfg: Config
@@ -57,7 +67,12 @@ class MVDreamSystem(BaseLift3DSystem):
             self.initial_gaussian_model_ref = None
             threestudio.info(f"Could not create initial Gaussian reference: {e}")
 
-        
+        self.renderer.configure(
+        geometry=self.geometry,
+        material=self.material,
+        background=self.background,
+        ref_geometry=self.initial_gaussian_model_ref
+        )
         #Some logging to see if parameters got passed correctly
         # Print all loss config parameters
         threestudio.info("Loss config parameters:")
@@ -212,11 +227,69 @@ class MVDreamSystem(BaseLift3DSystem):
             loss += chamfer
 
 
+        # --- Alpha silhouette losses ---
+        λ_sil = self.cfg.loss.get("lambda_alpha_silhouette_loss", 0.0)
+        if λ_sil > 0 and out.get("ref_mask") is not None:
+            loss_sil = alpha_silhouette_loss(
+                out["comp_mask"],
+                out["ref_mask"],
+                weight=λ_sil,
+                reduction='mean',
+                visual_log_callback=self.save_image_grid,
+                global_step=self.global_step
+            )
+            loss_sds += loss_sil
+            self.log("train/loss_silhouette", loss_sil)
+
+
+        # --- Depth silhouette loss ---
+        λ_dsil = self.cfg.loss.get("lambda_depth_silhouette_loss", 0.0)
+        if λ_dsil > 0 and out.get("ref_depth") is not None:
+            loss_dsil = depth_silhouette_loss(
+                out["comp_depth"],
+                out["ref_depth"],
+                weight=λ_dsil,
+                reduction='mean',
+                visual_log_callback=self.save_image_grid,
+                global_step=self.global_step
+            )
+            loss_sds += loss_dsil
+            self.log("train/loss_depth_silhouette", loss_dsil)
 
 
 
+        # masked SDS alpha+depth with hole filling
+        λ_alpha = self.cfg.loss.get("lambda_alpha_masked_sds", 0.0)
+        λ_depth = self.cfg.loss.get("lambda_depth_masked_sds", 0.0)
+        λ_masked_sds = self.cfg.loss.get("lambda_masked_sds", 0.0)
+        if λ_masked_sds > 0:
+            loss_m = masked_sds_loss(
+                out,
+                latents,
+                noise,
+                noise_pred,
+                self.cfg.loss,
+                λ_alpha,
+                λ_depth,
+                λ_masked_sds,
+                visual_log_callback=self.save_image_grid,
+                global_step=self.global_step
+            )
+            self.log('train/loss_masked_alpha_depth', loss_m)
+            loss_sds += loss_m
 
-
+        # --- Mask penetration loss ---
+        lambda_mask_pen = self.cfg.loss.get("lambda_mask_penetration", 0.0)
+        if lambda_mask_pen > 0.0 and batch.get("ref_mask") is not None:
+            mask_pen = mask_penetration_loss(
+                out,
+                scales=self.geometry.get_scaling,
+                weight=lambda_mask_pen,
+                visual_log_callback=self.visual_log_callback,
+                global_step=self.global_step,
+            )
+            self.log("train/loss_mask_penetration", mask_pen)
+            loss_sds += mask_pen
 
         for name, value in self.cfg.loss.items():
             if name.startswith("lambda_") and value > 0:
@@ -232,6 +305,7 @@ class MVDreamSystem(BaseLift3DSystem):
         )
         if loss > 0:
             loss.backward()
+        nn_utils.clip_grad_norm_(self.geometry.parameters(), 0.1)
         opt.step()
         opt.zero_grad(set_to_none=True)
 

@@ -585,7 +585,7 @@ class GaussianBaseModel(BaseGeometry, GaussianIO):
         self.optimizer = torch.optim.Adam(l, lr=0.0)
         return self.optimizer
 
-    def update_learning_rate(self, iteration):
+    def update_learning_rate(self, iteration, total_iters=3000):
         """Learning rate scheduling per step"""
         warmup_iters = getattr(self.cfg, "warmup_color_iters", 1500)
         ramp_up_duration = getattr(self.cfg, "ramp_up_structure_iters", 1000)

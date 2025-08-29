@@ -251,6 +251,9 @@ class GaussianBaseModel(BaseGeometry, GaussianIO):
 
         shap_e_guidance_config: dict = field(default_factory=dict)
 
+        pruning_start: int = 2800
+
+
     cfg: Config
 
     def setup_functions(self):

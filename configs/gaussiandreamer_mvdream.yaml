@@ -49,6 +49,9 @@ system:
     opacity_init: 0.1
     pc_init_radius: 0.6
 
+    #New (pass on lunch.py as argument)
+    pruning_start: 2800
+
   renderer_type: "gaussiandreamer-rasterizer"
   renderer:
     debug: false

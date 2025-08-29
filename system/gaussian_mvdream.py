@@ -309,6 +309,22 @@ class MVDreamSystem(BaseLift3DSystem):
         opt.step()
         opt.zero_grad(set_to_none=True)
 
+        #Prune scale outliers only shortly at the end of training
+        if self.global_step >= self.cfg.geometry.pruning_start and self.global_step % 200 == 0:
+            with torch.no_grad():
+                scales_cpu = self.geometry.get_scaling.detach().cpu()
+                max_per_gaussian = scales_cpu.max(dim=1).values
+                threshold = 6.0 * float(scales_cpu.mean())
+
+                big_mask = max_per_gaussian > threshold
+                n_pruned = int(big_mask.sum().item())
+
+                if n_pruned > 0:
+                    big_mask = big_mask.to(self.geometry._xyz.device)
+                    self.geometry.prune_points(big_mask)
+                    threestudio.info(f"[Prune] Step {self.global_step}: removed {n_pruned} gaussians >6× scale")
+        
+
         return {"loss": loss_sds}
 
     def grab(self,out,key, is_grayscale=False, data_range=False, camp=None):

@@ -98,6 +98,8 @@ system:
     lambda_tv_loss: 0.0
     lambda_depth_tv_loss: 0.0
 
+    lambda_scale_outlier: 0.0
+
     lambda_chamfer: 0.0
 
 trainer:

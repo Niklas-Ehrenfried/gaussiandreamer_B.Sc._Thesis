@@ -18,6 +18,7 @@ class MVDreamSystem(BaseLift3DSystem):
     @dataclass
     class Config(BaseLift3DSystem.Config):
         lambda_chamfer: float = 0.0
+        lambda_scale_outlier: float = 0.0
         visualize_samples: bool = False
 
     cfg: Config
@@ -159,10 +160,13 @@ class MVDreamSystem(BaseLift3DSystem):
             self.log("train/loss_sparsity", loss_sparsity)
             loss += loss_sparsity * self.C(self.cfg.loss.lambda_sparsity)
 
-        if self.cfg.loss["lambda_scales"] > 0.0:
-            scale_sum = torch.sum(self.geometry.get_scaling)
-            self.log(f"train/scales", scale_sum)
-            loss += self.C(self.cfg.loss["lambda_scales"]) * scale_sum
+        # Outlier loss
+        exp_out = self.cfg.loss.get("lambda_scale_outlier", 0.0)
+        if exp_out > 0.0:
+            scales = self.geometry.get_scaling
+            exp_outlier_loss = per_dim_log_smooth_l1_loss(scales, exp_out, quantile=0.95)
+            self.log("train/loss_scale_outlier", exp_outlier_loss)
+            loss += exp_outlier_loss
 
         if self.cfg.loss["lambda_tv_loss"] > 0.0:
             loss_tv = self.C(self.cfg.loss["lambda_tv_loss"]) * tv_loss(

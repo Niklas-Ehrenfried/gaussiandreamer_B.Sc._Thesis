@@ -203,8 +203,6 @@ class MVDreamSystem(BaseLift3DSystem):
             ref_pc = self.initial_gaussian_model_ref.get_xyz.unsqueeze(0).repeat(batch["c2w"].shape[0], 1, 1)
             chamfer = chamfer_loss_p3d(pred_pc, ref_pc, lambda_chamfer)
             self.log("train/loss_chamfer", chamfer)
-            if self.global_step % 100 == 0:
-                threestudio.info(f"Chamfer loss: {chamfer.item()} at step {self.global_step}")
             loss += chamfer
 
 
@@ -261,6 +259,12 @@ class MVDreamSystem(BaseLift3DSystem):
     
     def validation_step(self, batch, batch_idx):
         out = self(batch)
+        if batch_idx == 0:
+            pred_pc = self.geometry.get_xyz.unsqueeze(0).repeat(batch["c2w"].shape[0], 1, 1)
+            ref_pc = self.initial_gaussian_model_ref.get_xyz.unsqueeze(0).repeat(batch["c2w"].shape[0], 1, 1)
+            chamfer = chamfer_loss_p3d(pred_pc, ref_pc, 1.0)
+            threestudio.info(f"Chamfer loss: {chamfer.item()} at step {self.global_step}")
+
         # debug info
         # [INFO] out[ref_rgb]: shape=(1, 512, 512, 3)
         # [INFO] out[ref_viewspace_points]: type=<class 'list'>
@@ -324,8 +328,7 @@ class MVDreamSystem(BaseLift3DSystem):
         )
 
     def on_validation_epoch_end(self):
-        pass
-
+            pass
     def test_step(self, batch, batch_idx):
         out = self(batch)
         images = [

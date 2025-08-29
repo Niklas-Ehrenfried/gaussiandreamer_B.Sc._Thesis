@@ -160,6 +160,11 @@ class MVDreamSystem(BaseLift3DSystem):
             self.log("train/loss_sparsity", loss_sparsity)
             loss += loss_sparsity * self.C(self.cfg.loss.lambda_sparsity)
 
+        if self.cfg.loss["lambda_scales"] > 0.0:
+            scale_sum = torch.sum(self.geometry.get_scaling)
+            self.log(f"train/scales", scale_sum)
+            loss += self.C(self.cfg.loss["lambda_scales"]) * scale_sum
+            
         # Outlier loss
         exp_out = self.cfg.loss.get("lambda_scale_outlier", 0.0)
         if exp_out > 0.0:

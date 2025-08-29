@@ -4,18 +4,20 @@ from dataclasses import dataclass, field
 import numpy as np
 import threestudio
 import torch
+import copy
 from threestudio.systems.base import BaseLift3DSystem
 from threestudio.systems.utils import parse_optimizer, parse_scheduler
 from threestudio.utils.loss import tv_loss
 from threestudio.utils.typing import *
 
 from ..geometry.gaussian_base import BasicPointCloud
-
+from .loss import *
 
 @threestudio.register("gaussiandreamer-mvdream-system")
 class MVDreamSystem(BaseLift3DSystem):
     @dataclass
     class Config(BaseLift3DSystem.Config):
+        lambda_chamfer: float = 0.0
         visualize_samples: bool = False
 
     cfg: Config
@@ -30,6 +32,41 @@ class MVDreamSystem(BaseLift3DSystem):
             self.cfg.prompt_processor
         )
         self.prompt_utils = self.prompt_processor()
+
+
+        #Reference taken from initial model
+        #TODO use actual mesh for better results
+        self.initial_gaussian_model_ref = None
+
+        try:
+            self.initial_gaussian_model_ref = copy.deepcopy(self.geometry)
+            self.initial_gaussian_model_ref.eval()
+            for name,param in self.initial_gaussian_model_ref.named_parameters():
+                param.data = param.data.detach().clone()
+                param.requires_grad = False
+
+            for name, buffer in self.initial_gaussian_model_ref.named_buffers():
+                if buffer is not None:
+                    buffer.data = buffer.data.detach().clone()
+            threestudio.info(f"Initialized reference renderer for silhouette loss.")
+
+            threestudio.info(f"Model id: {id(self.geometry)}")
+            threestudio.info(f"Model ref id: {id(self.initial_gaussian_model_ref)}")
+        except Exception as e:
+            self.initial_gaussian_model_ref = None
+            threestudio.info(f"Could not create initial Gaussian reference: {e}")
+
+        
+        #Some logging to see if parameters got passed correctly
+        # Print all loss config parameters
+        threestudio.info("Loss config parameters:")
+        for key, value in self.cfg.loss.items():
+            threestudio.info(f"  {key}: {value}")
+
+        # Print all geometry config parameters
+        threestudio.info("Geometry config parameters:")
+        for key, value in self.cfg.geometry.items():
+            threestudio.info(f"  {key}: {value}")
 
     def configure_optimizers(self):
         optim = self.geometry.optimizer
@@ -69,8 +106,15 @@ class MVDreamSystem(BaseLift3DSystem):
         viewspace_point_tensor = out["viewspace_points"]
         
         guidance_out = self.guidance(
-            guidance_inp, self.prompt_utils, **batch, rgb_as_latents=False
+            guidance_inp, self.prompt_utils, **batch, rgb_as_latents=False, return_full_sds=True
         )
+
+        # get raw SDS tensors (later for masked SDS)
+        latents    = guidance_out.pop("sds_latents", None)
+        timesteps  = guidance_out.pop("sds_t",        None)
+        noise      = guidance_out.pop("sds_noise",    None)
+        noise_pred = guidance_out.pop("sds_noise_pred", None)
+
 
         loss_sds = 0.0
         loss = 0.0
@@ -84,12 +128,13 @@ class MVDreamSystem(BaseLift3DSystem):
             logger=True,
         )
 
-        for name, value in guidance_out.items():
-            self.log(f"train/{name}", value)
-            if name.startswith("loss_"):
-                loss_sds += value * self.C(
-                    self.cfg.loss[name.replace("loss_", "lambda_")]
-                )
+        if self.cfg.loss.get("lambda_sds", 0.0) > 0.0:
+            for name, value in guidance_out.items():
+                self.log(f"train/{name}", value)
+                if name.startswith("loss_"):
+                    loss_sds += value * self.C(
+                        self.cfg.loss[name.replace("loss_", "lambda_")]
+                    )
 
         xyz_mean = None
         if self.cfg.loss["lambda_position"] > 0.0:
@@ -142,8 +187,36 @@ class MVDreamSystem(BaseLift3DSystem):
             )
             loss += loss_pred_normal
 
+
+
+
+
+
+
+
+        # --- Chamfer loss (point cloud similarity) ---
+        lambda_chamfer = self.cfg.loss.get("lambda_chamfer", 0.0)
+        if self.global_step >= self.cfg.geometry.densify_from_iter and self.global_step <= self.cfg.geometry.densify_until_iter:
+            lambda_chamfer = 0.0
+        if lambda_chamfer > 0.0 and hasattr(self.geometry, "get_xyz") and batch.get("ref_pc") is not None:
+            pred_pc = self.geometry.get_xyz.unsqueeze(0).repeat(batch["c2w"].shape[0], 1, 1)
+            ref_pc = self.initial_gaussian_model_ref.get_xyz.unsqueeze(0).repeat(batch["c2w"].shape[0], 1, 1)
+            chamfer = chamfer_loss_p3d(pred_pc, ref_pc, lambda_chamfer)
+            self.log("train/loss_chamfer", chamfer)
+            if self.global_step % 100 == 0:
+                threestudio.info(f"Chamfer loss: {chamfer.item()} at step {self.global_step}")
+            loss += chamfer
+
+
+
+
+
+
+
+
         for name, value in self.cfg.loss.items():
-            self.log(f"train_params/{name}", self.C(value))
+            if name.startswith("lambda_") and value > 0:
+                self.log(f"train_params/{name}", self.C(value))
 
         loss_sds.backward(retain_graph=True)
         iteration = self.global_step
@@ -160,40 +233,77 @@ class MVDreamSystem(BaseLift3DSystem):
 
         return {"loss": loss_sds}
 
+    def grab(self,out,key, is_grayscale=False, data_range=False, camp=None):
+        img = out[key].detach().squeeze()
+        return {
+            "type": "grayscale" if is_grayscale else "rgb",
+            "img": img,
+            "kwargs": {
+                **({"data_format": "HWC"} if not is_grayscale else {"cmap": camp}),
+                **({"data_range": (0,1)} if data_range else {"data_range": None}),
+            },
+        }
+    
     def validation_step(self, batch, batch_idx):
         out = self(batch)
-        # import pdb; pdb.set_trace()
+        # debug info
+        # [INFO] out[ref_rgb]: shape=(1, 512, 512, 3)
+        # [INFO] out[ref_viewspace_points]: type=<class 'list'>
+        # [INFO] out[ref_visibility_filter]: type=<class 'list'>
+        # [INFO] out[ref_radii]: type=<class 'list'>
+        # [INFO] out[ref_normal]: shape=(1, 512, 512, 3)
+        # [INFO] out[ref_depth]: shape=(1, 512, 512, 1)
+        # [INFO] out[ref_mask]: shape=(1, 512, 512, 1)
+        # [INFO] out[comp_rgb]: shape=(1, 512, 512, 3)
+        # [INFO] out[viewspace_points]: type=<class 'list'>
+        # [INFO] out[visibility_filter]: type=<class 'list'>
+        # [INFO] out[radii]: type=<class 'list'>
+        # [INFO] out[comp_normal]: shape=(1, 512, 512, 3)
+        # [INFO] out[comp_depth]: shape=(1, 512, 512, 1)
+        # [INFO] out[comp_mask]: shape=(1, 512, 512, 1)
+        # [INFO] out[ref_rgb]: shape=(1, 512, 512, 3)
+        # [INFO] out[ref_viewspace_points]: type=<class 'list'>
+        # [INFO] out[ref_visibility_filter]: type=<class 'list'>
+        # [INFO] out[ref_radii]: type=<class 'list'>
+        # [INFO] out[ref_normal]: shape=(1, 512, 512, 3)
+        # [INFO] out[ref_depth]: shape=(1, 512, 512, 1)
+        # [INFO] out[ref_mask]: shape=(1, 512, 512, 1)
+
+        # Print all geometry parameters and their shapes
+        # [INFO] Geometry parameters and their shapes:
+        # [INFO]   _xyz: (181690, 3)
+        # [INFO]   _features_dc: (181690, 1, 3)
+        # [INFO]   _features_rest: (181690, 0, 3)
+        # [INFO]   _scaling: (181690, 3)
+        # [INFO]   _rotation: (181690, 4)
+        # [INFO]   _opacity: (181690, 1)
+        images = [
+            self.grab(out, "comp_rgb", data_range=True)
+        ]
+
+
+        # optional normals
+        if "comp_normal" in out:
+            images.append(self.grab(out,"comp_normal", data_range=True))
+        if "comp_pred_normal" in out:
+            images.append(self.grab(out,"comp_pred_normal", data_range=True))
+
+        # masks
+        if "comp_mask" in out:
+            images.append(self.grab(out,"comp_mask", is_grayscale=True))
+        if "ref_mask" in out:
+            images.append(self.grab(out,"ref_mask", is_grayscale=True))
+
+        # depth
+        if "comp_depth" in out:
+            images.append(self.grab(out,"comp_depth", is_grayscale=True, camp="jet"))
+        if "ref_depth" in out:
+            images.append(self.grab(out,"ref_depth", is_grayscale=True, camp="jet"))
+
+        # now everything in `images` is guaranteed 3D
         self.save_image_grid(
-            f"it{self.global_step}-{batch['index'][0]}.png",
-            [
-                {
-                    "type": "rgb",
-                    "img": out["comp_rgb"][0],
-                    "kwargs": {"data_format": "HWC"},
-                },
-            ]
-            + (
-                [
-                    {
-                        "type": "rgb",
-                        "img": out["comp_normal"][0],
-                        "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
-                    }
-                ]
-                if "comp_normal" in out
-                else []
-            )
-            + (
-                [
-                    {
-                        "type": "rgb",
-                        "img": out["comp_pred_normal"][0],
-                        "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
-                    }
-                ]
-                if "comp_pred_normal" in out
-                else []
-            ),
+            f"validation/it{self.global_step}-{batch['index'][0]}.png",
+            images,
             name="validation_step",
             step=self.global_step,
         )
@@ -203,40 +313,18 @@ class MVDreamSystem(BaseLift3DSystem):
 
     def test_step(self, batch, batch_idx):
         out = self(batch)
+        images = [
+            self.grab(out, "comp_rgb", data_range=True),
+        ]
+        # save the image grid
         self.save_image_grid(
             f"it{self.global_step}-test/{batch['index'][0]}.png",
-            [
-                {
-                    "type": "rgb",
-                    "img": out["comp_rgb"][0],
-                    "kwargs": {"data_format": "HWC"},
-                },
-            ]
-            + (
-                [
-                    {
-                        "type": "rgb",
-                        "img": out["comp_normal"][0],
-                        "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
-                    }
-                ]
-                if "comp_normal" in out
-                else []
-            )
-            + (
-                [
-                    {
-                        "type": "rgb",
-                        "img": out["comp_pred_normal"][0],
-                        "kwargs": {"data_format": "HWC", "data_range": (0, 1)},
-                    }
-                ]
-                if "comp_pred_normal" in out
-                else []
-            ),
+            images,
             name="test_step",
             step=self.global_step,
         )
+
+        # save point cloud once
         if batch["index"][0] == 0:
             save_path = self.get_save_path("point_cloud.ply")
             self.geometry.save_ply(save_path)

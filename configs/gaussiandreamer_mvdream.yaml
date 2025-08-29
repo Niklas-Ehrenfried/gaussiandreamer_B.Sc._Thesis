@@ -76,7 +76,7 @@ system:
     model_name: "sd-v2.1-base-4view"
     ckpt_path: null # path to a pre-downloaded checkpoint file (null for loading from URL)
     guidance_scale: 50.0
-    min_step_percent: 0.02  # (start_iter, start_val, end_val, end_iter)
+    min_step_percent: 0.02 # (start_iter, start_val, end_val, end_iter)
     max_step_percent: [500, 0.98, 0.5, 501]
     recon_loss: true
     recon_std_rescale: 0.5
@@ -86,20 +86,22 @@ system:
   loggers:
     wandb:
       enable: false
-      project: 'threestudio'
+      project: "threestudio"
       name: None
 
   loss:
-    lambda_sds: 1.
-    lambda_sparsity: 0.
-    lambda_position: 0.
-    lambda_opacity: 0.
-    lambda_scales: 0.
+    lambda_sds: 1.0
+    lambda_sparsity: 0.0
+    lambda_position: 0.0
+    lambda_opacity: 0.0
+    lambda_scales: 0.0
     lambda_tv_loss: 0.0
-    lambda_depth_tv_loss: 0.
+    lambda_depth_tv_loss: 0.0
+
+    lambda_chamfer: 0.0
 
 trainer:
-  max_steps: 1200
+  max_steps: 3000
   log_every_n_steps: 1
   num_sanity_val_steps: 0
   val_check_interval: 100

@@ -108,6 +108,7 @@ class MVDreamSystem(BaseLift3DSystem):
         return
 
     def forward(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        #TODO add max steps from trainer for learning rate schedules different from 3000
         self.geometry.update_learning_rate(self.global_step)
         outputs = self.renderer.batch_forward(batch)
         return outputs

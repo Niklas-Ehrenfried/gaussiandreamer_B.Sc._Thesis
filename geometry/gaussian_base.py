@@ -253,6 +253,9 @@ class GaussianBaseModel(BaseGeometry, GaussianIO):
 
 
         pruning_start: int = 2800
+        multiplier_lr: float = 0.01
+        warmup_color_iters: int = 1500
+        ramp_up_structure_iters: int = 1000
 
     cfg: Config
 
@@ -584,37 +587,68 @@ class GaussianBaseModel(BaseGeometry, GaussianIO):
 
     def update_learning_rate(self, iteration):
         """Learning rate scheduling per step"""
+        warmup_iters = getattr(self.cfg, "warmup_color_iters", 1500)
+        ramp_up_duration = getattr(self.cfg, "ramp_up_structure_iters", 1000)
+
+        ramp_up_start = warmup_iters
+        ramp_up_end = warmup_iters + ramp_up_duration
+
         for param_group in self.optimizer.param_groups:
-            if not ("name" in param_group):
+            if "name" not in param_group:
                 continue
-            if param_group["name"] == "xyz":
-                param_group["lr"] = C(
-                    self.cfg.position_lr, 0, iteration, interpolation="linear"
-                )
-            if param_group["name"] == "scaling":
-                param_group["lr"] = C(
-                    self.cfg.scaling_lr, 0, iteration, interpolation="linear"
-                )
+            
             if param_group["name"] == "f_dc":
                 param_group["lr"] = C(
                     self.cfg.feature_lr, 0, iteration, interpolation="linear"
                 )
+                continue
             if param_group["name"] == "f_rest":
                 param_group["lr"] = (
                     C(self.cfg.feature_lr, 0, iteration, interpolation="linear") / 20.0
                 )
+                continue
+
+            #TODO opacity lr should be high during coloring since it will help also i think the others might do with *0.1 or even *0.5
+            initial_lr = 0.0
+            if param_group["name"] == "xyz":
+                initial_lr = self.cfg.position_lr
+            if param_group["name"] == "scaling":
+                initial_lr = self.cfg.scaling_lr
             if param_group["name"] == "opacity":
-                param_group["lr"] = C(
-                    self.cfg.opacity_lr, 0, iteration, interpolation="linear"
-                )
+                initial_lr = self.cfg.opacity_lr
             if param_group["name"] == "rotation":
-                param_group["lr"] = C(
-                    self.cfg.rotation_lr, 0, iteration, interpolation="linear"
-                )
+                initial_lr = self.cfg.rotation_lr
             if param_group["name"] == "normal":
-                param_group["lr"] = C(
-                    self.cfg.normal_lr, 0, iteration, interpolation="linear"
-                )
+                initial_lr = self.cfg.normal_lr
+            if initial_lr == 0.0:
+                continue
+
+            # Phase 1: Coloring
+            if iteration < ramp_up_start:
+                if param_group["name"] == "xyz":
+                    lr = 0.0
+                else:
+                    lr = initial_lr * self.cfg.multiplier_lr
+            
+            # Phase 2: Slow Structure Ramp-Up
+            elif ramp_up_start <= iteration < ramp_up_end:
+                warmup_lr = 0.0 if param_group["name"] == "xyz" else initial_lr * self.cfg.multiplier_lr
+                progress = (iteration - ramp_up_start) / ramp_up_duration
+                lr = warmup_lr + (initial_lr - warmup_lr) * progress
+                
+            # Phase 3: Decay lr till end of training
+            else:
+                shifted_iter = iteration - ramp_up_end
+                decay_duration = total_iters - ramp_up_end
+                
+                if decay_duration <= 0:
+                    lr = 0.0
+                else:
+                    progress = min(1.0, shifted_iter / decay_duration)
+                    lr = initial_lr * (1.0 - progress)
+
+            param_group["lr"] = lr
+
         self.color_clip = C(self.cfg.color_clip, 0, iteration)
 
     def reset_opacity(self):

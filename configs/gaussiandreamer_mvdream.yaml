@@ -50,7 +50,10 @@ system:
     pc_init_radius: 0.6
 
     #New (pass on lunch.py as argument)
+    warmup_color_iters: 1000
+    ramp_up_structure_iters: 1000
     pruning_start: 2800
+    multiplier_lr: 0.01
 
   renderer_type: "gaussiandreamer-rasterizer"
   renderer:

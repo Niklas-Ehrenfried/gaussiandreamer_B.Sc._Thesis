@@ -4,9 +4,7 @@
 
 ## Final Experiments
 
-The images below were produced during experiments for the bachelor thesis. Each image config is shown as its caption.
-
-<!-- Results/Final_Experiments images -->
+The images below were generated as part of the experiments for the bachelor thesis. Each image caption indicates the corresponding configuration. The left column shows results with initial color from the reference geometry, the middle column shows results without initial color, and the right column displays the reference/ground truth.
 
 <p align="center">
   <img src="Results/Final_Experiments/Basic_Chamfer_Prune_collage_all.png" width="30%">

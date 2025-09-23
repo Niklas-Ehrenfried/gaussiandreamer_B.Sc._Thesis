@@ -1,0 +1,139 @@
+You are a Blender object designer. Write a self-contained Blender Python (bpy) script to build a simple, physically plausible 3D scene. Your script must adhere to the following structure and constraints; each numbered section is a major build phase with its purpose explained.
+
+0) Object Description
+<OBJECTS_DESCRIPTION> = 'a beige house with a red roof and black chimney, surrounded by a white picket fence.'
+
+
+1) Scene Reset & Collections
+// Ensure a clean slate before building
+* clear_scene(): Remove all existing objects and collections (excluding the default 'Scene Collection').
+* make_collection(name): Create named collections for grouping:
+    * Ground
+    * One per major object (e.g., ObjectA, ObjectB, ObjectC, etc., corresponding to distinct entities in the Object Description)
+    * (Optionally) Specific sub-components or utility groups (e.g., Props, Details, Grid_Objects, Scatter_Objects)
+* move_to_collection(obj, collection): Utility to re-parent objects into their collection.
+2) Global Parameters
+// Centralize all tunable dimensions and feature toggles. Place at the top of your script.
+// Adjust these parameters based on the specific objects described in the Object Description.
+
+* Scene scale
+    * ground_size = 10.0   // Don't make it to big for smaller objects/sence
+
+* Object A dimensions (for the first primary object from Object Description)
+    * objectA_dim1 = 4.0   // e.g., width, length, or radius
+    * objectA_dim2 = 1.0   // e.g., depth, width, or height
+    * objectA_dim3 = 1.5   // e.g., height, depth
+    * objectA_paramX = 0.5 // Additional custom parameter if needed for Object A
+
+* Object B dimensions (for the second primary object from Object Description)
+    * objectB_dim1 = 0.5   // e.g., radius, length
+    * objectB_dim2 = 2.0   // e.g., height, width
+    * objectB_paramY = 1.2 // Additional custom parameter if needed for Object B
+
+* Object C dimensions (for the third primary object from Object Description, if applicable)
+    * objectC_dim1 = 1.5
+    * objectC_dim2 = 0.8
+    * objectC_dim3 = 0.7
+    * objectC_paramZ = 0.25
+
+// ... Add more objectD_... parameters as needed for additional objects in your scene, following the pattern above.
+
+* Optional grid/arrayed structures (e.g., fence posts, tiles, repeated elements)
+    * grid_enabled = False // Set to True to activate, only if relevant to Object Description
+    * grid_count_x = 5
+    * grid_count_y = 3
+    * grid_spacing_x = 2.0
+    * grid_spacing_y = 2.5
+    * grid_offset_x = - (ground_size / 2) + 1.0 // Relative to scene center
+    * grid_offset_y = - (ground_size / 2) + 1.0
+
+* Optional scatterers (e.g., rocks, plants, debris, pebbles, small ground details)
+    * scatter_enabled = False // Set to True to activate, only if relevant to Object Description
+    * scatter_count = 30
+    * scatter_min_x = -ground_size / 2 + 0.5
+    * scatter_max_x = ground_size / 2 - 0.5
+    * scatter_min_y = -ground_size / 2 + 0.5
+    * scatter_max_y = ground_size / 2 - 0.5
+    * scatter_object_min_scale = 0.1
+    * scatter_object_max_scale = 0.5
+3) Ground Plane
+// Create the foundational floor
+* Add a plane of size ground_size at Z = 0 and with the center at X = 0, Y = 0.
+* Name it Ground_Plane and move it into the Ground collection.
+4) Main Objects
+// Build each primary object implied by the Object Description with clear sizing and placement.
+// Focus on making complex objects physically plausible and structurally sound.
+* For every object implied by the Object Description:
+    * Choose simple primitives (cube, cylinder, cone, sphere, etc.) to combine into more complex objects.
+    * Achieve the highest complexity you can for each object, even if it's a simplified representation. For instance, a complex object should be composed of multiple distinct primitive components (e.g., a multi-part vehicle, an articulated creature, a building with several sections).
+    * Set obj.dimensions or radius/depth to match the generic objectX_dimN parameters defined in Global Parameters.
+    * Position bottom face at Z = 0 (or stacked on another object’s top surface, maintaining physical plausibility).
+    * Name with a clear prefix (e.g., ObjectA_Base, ObjectB_Component, ObjectC_Detail).
+    * move_to_collection(obj, its_collection).
+    * Manage inter-object relationships: If one object needs to be positioned or sized relative to another, the builder function for the dependent object should accept a reference to the primary object (e.g., build_objectB(objectA_obj)).
+5) Supporting Features (Optional)
+// This entire section (5a, 5b, 5c) should only be generated in the Python script if the Object Description explicitly or implicitly suggests the need for repeated elements (like fences, pillars, or rows of trees) or randomly distributed elements (like rocks, foliage, or debris).
+
+* 5a) Grid / Arrayed Structures
+    * // Evenly-spaced rows and columns (e.g., fence posts, tiles, uniform patterns)
+    * Define factory:
+        * make_grid_item(i, j, x, y) – create primitive, set name, move to grid_coll.
+    * Build loop:
+        * def build_grid():
+        * if not grid_enabled: return
+        * print("Building grid items...")
+        * for i in range(grid_count_x):
+        * for j in range(grid_count_y):
+        * x = grid_offset_x + i * grid_spacing_x
+        * y = grid_offset_y + j * grid_spacing_y
+        * make_grid_item(i, j, x, y)
+
+* 5b) Random Scatterers
+    * // Distribute small items randomly (e.g., rocks, plants, debris, pebbles)
+    * Define factory:
+        * make_scatter_item(idx, x, y) – create primitive, randomize scale, set name, move to scatter_coll.
+    * Build loop:
+        * def scatter_items():
+        * if not scatter_enabled: return
+        * print("Scattering items...")
+        * for i in range(scatter_count):
+        * x = random.uniform(scatter_min_x, scatter_max_x)
+        * y = random.uniform(scatter_min_y, scatter_max_y)
+        * make_scatter_item(i, x, y)
+
+* 5c) Hook into main build
+    * // If 5a or 5b are generated, call them at the end of the main execution sequence.
+    * build_grid()    // arrayed/repeating structures, if enabled
+    * scatter_items() // random scatterers, if enabled
+6) Helper Functions & Organization
+// Keep code modular and readable
+* clear_scene()
+* make_collection(name)
+* move_to_collection(obj, coll)
+* Specific builders: build_ground(), build_objectA(...), build_objectB(...), build_objectC(...), build_grid(), scatter_items().
+* Group code blocks with comments:
+    * # 1) Ground Plane
+    * # 2) Main Objects
+    * # 3) Supporting Features
+7) Main Execution & Final Printout
+// Tie everything together and confirm success
+* if __name__ == "__main__":
+    * clear_scene()
+
+    * // Create Collections (adjust names/number based on Object Description)
+    * ground_coll = make_collection("Ground")
+    * objectA_coll = make_collection("ObjectA_Collection")
+    * objectB_coll = make_collection("ObjectB_Collection")
+    * objectC_coll = make_collection("ObjectC_Collection")
+    * grid_coll = make_collection("Grid_Objects")
+    * scatter_coll = make_collection("Scatter_Objects")
+
+    * // Build Scene (adjust calls and object passing based on Object Description)
+    * build_ground()
+    * primary_object_A = build_objectA()
+    * secondary_object_B = build_objectB(primary_object_A) // Example of passing an object for relative positioning
+    * tertiary_object_C = build_objectC(primary_object_A)  // Example of another object positioned relative to A
+    * build_grid()    // optional, based on grid_enabled
+    * scatter_items() // optional, based on scatter_enabled
+
+    * print("Scene built successfully!")
